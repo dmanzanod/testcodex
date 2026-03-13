@@ -8,13 +8,21 @@ import json
 import os
 import sys
 import time
+import traceback
 import unicodedata
 from typing import Iterable, Optional
 
 from selenium import webdriver
 from selenium.webdriver import ActionChains
-from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, TimeoutException
+from selenium.common.exceptions import (
+    NoAlertPresentException,
+    NoSuchElementException,
+    SessionNotCreatedException,
+    TimeoutException,
+    WebDriverException,
+)
 from selenium.webdriver import ChromeOptions
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -31,9 +39,24 @@ def build_driver(headless: bool) -> webdriver.Chrome:
         options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-software-rasterizer")
     options.add_argument("--window-size=1440,900")
     options.add_argument("--lang=pt-BR")
-    return webdriver.Chrome(options=options)
+
+    chrome_binary = os.getenv("CHROME_BINARY")
+    if chrome_binary:
+        options.binary_location = chrome_binary
+
+    service_kwargs = {}
+    chromedriver_log = os.getenv("CHROMEDRIVER_LOG")
+    if chromedriver_log:
+        service_kwargs["log_output"] = chromedriver_log
+    if os.getenv("CHROMEDRIVER_VERBOSE", "").lower() in {"1", "true", "yes"}:
+        service_kwargs["service_args"] = ["--verbose"]
+
+    service = Service(**service_kwargs)
+    return webdriver.Chrome(service=service, options=options)
 
 
 def find_first_visible(driver: webdriver.Chrome, selectors: Iterable[tuple[str, str]], timeout: int = 15):
@@ -884,33 +907,61 @@ def process_cotacoes_and_items(driver: webdriver.Chrome, timeout: int) -> None:
     print(json.dumps(cotacoes_json, ensure_ascii=False, indent=2))
 
 
+
+
+def _run_step(step_name: str, action) -> None:
+    print(f"➡️ {step_name}")
+    try:
+        action()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Fallo en paso '{step_name}': {exc!r}") from exc
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="RPA login para me.com.br")
     parser.add_argument("--login", default=os.getenv("ME_LOGIN", DEFAULT_LOGIN), help="Login de acceso")
     parser.add_argument("--password", default=os.getenv("ME_PASSWORD", DEFAULT_PASSWORD), help="Senha de acceso")
     parser.add_argument("--headed", action="store_true", help="Ejecuta con navegador visible")
     parser.add_argument("--timeout", type=int, default=25, help="Timeout general en segundos")
+    parser.add_argument("--debug-traceback", action="store_true", help="Imprime traceback completo al fallar")
     args = parser.parse_args()
 
-    driver = build_driver(headless=not args.headed)
+    driver: Optional[webdriver.Chrome] = None
 
     try:
-        open_login_page(driver, args.timeout)
-        do_login(driver, args.login, args.password)
-        validate_login(driver, args.timeout)
-        handle_timezone_screen(driver, args.timeout)
-        handle_confirmation_window(driver, args.timeout)
-        handle_continue_navigation(driver, args.timeout)
-        go_to_transacoes_em_andamento(driver, args.timeout)
-        go_to_cotacao_em_andamento(driver, args.timeout)
-        process_cotacoes_and_items(driver, args.timeout)
+        driver = build_driver(headless=not args.headed)
+        _run_step("Abrir página de login", lambda: open_login_page(driver, args.timeout))
+        _run_step("Realizar login", lambda: do_login(driver, args.login, args.password))
+        _run_step("Validar login", lambda: validate_login(driver, args.timeout))
+        _run_step("Resolver pantalla timezone", lambda: handle_timezone_screen(driver, args.timeout))
+        _run_step("Resolver ventana de confirmación", lambda: handle_confirmation_window(driver, args.timeout))
+        _run_step("Continuar navegación en comunicado", lambda: handle_continue_navigation(driver, args.timeout))
+        _run_step("Ir a Transações > Em Andamento", lambda: go_to_transacoes_em_andamento(driver, args.timeout))
+        _run_step("Ir a Cotação > Em Andamento", lambda: go_to_cotacao_em_andamento(driver, args.timeout))
+        _run_step("Procesar cotizaciones e ítems", lambda: process_cotacoes_and_items(driver, args.timeout))
         print(f"✅ Login exitoso. URL final: {driver.current_url}")
         return 0
+    except SessionNotCreatedException as exc:
+        print("❌ Error creando sesión de ChromeDriver.")
+        print("   Revisa compatibilidad entre Chrome/Chromium y ChromeDriver.")
+        print("   En Linux headless instala librerías de sistema requeridas y prueba con --headed para diagnóstico.")
+        print("   Puedes exportar CHROMEDRIVER_LOG=/tmp/chromedriver.log y CHROMEDRIVER_VERBOSE=1 para más detalle.")
+        print(f"   Detalle: {exc!r}")
+        if args.debug_traceback:
+            traceback.print_exc()
+        return 1
+    except WebDriverException as exc:
+        print(f"❌ Error de WebDriver: {exc!r}")
+        if args.debug_traceback:
+            traceback.print_exc()
+        return 1
     except Exception as exc:  # noqa: BLE001
-        print(f"❌ Error en el flujo RPA: {exc}")
+        print(f"❌ Error en el flujo RPA: {exc!r}")
+        if args.debug_traceback:
+            traceback.print_exc()
         return 1
     finally:
-        driver.quit()
+        if driver is not None:
+            driver.quit()
 
 
 if __name__ == "__main__":
