@@ -56,6 +56,4 @@ python rpa.py --login "$ME_LOGIN" --password "$ME_PASSWORD" --debug-traceback
 
 ```bash
 export CHROME_BINARY=/usr/bin/google-chrome
-```
 
-6. Si ves `Fallo en paso 'Validar login': TimeoutException()` pero ya estás dentro del menú, actualiza a la última versión: el validador ahora también detecta menús visibles (Transações/Cotação/logo), no solo URL.
