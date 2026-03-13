@@ -130,10 +130,33 @@ def do_login(driver: webdriver.Chrome, login_name: str, password: str) -> None:
     submit.click()
 
 
+def _looks_like_logged_area(driver: webdriver.Chrome) -> bool:
+    url = driver.current_url.lower()
+    if any(token in url for token in ["definetimezonebase", "timezone", "home", "dashboard", "comunicadousuario"]):
+        return True
+
+    menu_selectors = [
+        (By.XPATH, "//*[contains(translate(normalize-space(.), 'TRANSAÇÕES', 'transações'), 'transações') or contains(translate(normalize-space(.), 'TRANSACCOES', 'transaccoes'), 'transaccoes')]"),
+        (By.XPATH, "//*[contains(translate(normalize-space(.), 'COTAÇÃO', 'cotação'), 'cotação') or contains(translate(normalize-space(.), 'COTACAO', 'cotacao'), 'cotacao')]"),
+        (By.CSS_SELECTOR, "img[src*='logo' i], .logo img, .navbar-brand img, #logo img"),
+    ]
+
+    for by, selector in menu_selectors:
+        for element in driver.find_elements(by, selector):
+            if element.is_displayed():
+                return True
+
+    return False
+
+
 def validate_login(driver: webdriver.Chrome, timeout: int) -> None:
-    WebDriverWait(driver, timeout).until(
-        lambda d: "DefineTimeZoneBase" in d.current_url or "timezone" in d.current_url.lower() or "home" in d.current_url.lower()
-    )
+    try:
+        WebDriverWait(driver, timeout).until(lambda d: _looks_like_logged_area(d))
+    except TimeoutException as exc:
+        raise TimeoutException(
+            f"No se confirmó login. URL actual: {driver.current_url!r}. "
+            "Si ya estás autenticado, ajusta los selectores/condiciones de validate_login()."
+        ) from exc
 
 
 def _click_any(driver: webdriver.Chrome, selectors: list[tuple[str, str]], timeout: int) -> bool:

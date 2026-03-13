@@ -56,4 +56,4 @@ python rpa.py --login "$ME_LOGIN" --password "$ME_PASSWORD" --debug-traceback
 
 ```bash
 export CHROME_BINARY=/usr/bin/google-chrome
-```
+
